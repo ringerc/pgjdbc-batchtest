@@ -41,7 +41,7 @@ public class TestBatch {
 	public static void tearDownAfterClass() throws Exception {
 		conn.close();
 	}
-	
+
 	@Test @Ignore
 	public void testPreparedInsertBatchReturning() throws SQLException {
 		// Fails with "result ... where no result expected"
@@ -50,7 +50,7 @@ public class TestBatch {
 	
 	@Test
 	public void testPreparedInsertBatch() throws SQLException {
-		preparedInsertBatchCommon(10, false);
+		preparedInsertBatchCommon(100, false);
 	}
 	
 	private void preparedInsertBatchCommon(int nBatches, boolean useReturning) throws SQLException {		
