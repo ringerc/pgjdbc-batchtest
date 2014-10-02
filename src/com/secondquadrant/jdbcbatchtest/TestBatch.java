@@ -24,8 +24,8 @@ public class TestBatch {
 	@BeforeClass
 	public static void setUpBeforeClass() throws Exception {
 		Properties connProps = new Properties();
-		connProps.setProperty("user", "craig");
-		connProps.setProperty("password", "thinker");
+		connProps.setProperty("user", System.getProperty("user.name"));
+		connProps.setProperty("password", System.getProperty("jdbcPassword"));
 		
 		conn = DriverManager.getConnection("jdbc:postgresql://localhost/regress", connProps);
 		
