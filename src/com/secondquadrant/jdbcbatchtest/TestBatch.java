@@ -22,12 +22,11 @@ public class TestBatch {
 	static Connection conn;
 	
 	@BeforeClass
-	public static void setUpBeforeClass() throws Exception {
+	public static void setUpBeforeClass() throws Exception {	
 		Properties connProps = new Properties();
-		connProps.setProperty("user", System.getProperty("user.name"));
-		connProps.setProperty("password", System.getProperty("jdbcPassword"));
+		connProps.setProperty("loglevel", "2");
 		
-		conn = DriverManager.getConnection("jdbc:postgresql://localhost/regress", connProps);
+		conn = JDBCConnectionFactory.getConnection(connProps);
 		
 		Statement st = conn.createStatement();
 		st.execute("DROP TABLE IF EXISTS prep");

@@ -2,9 +2,13 @@ package com.secondquadrant.jdbcbatchtest;
 
 import static org.junit.Assert.*;
 
+import java.lang.reflect.Field;
+import java.net.Socket;
+import java.net.SocketException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
@@ -13,8 +17,15 @@ import java.util.Properties;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
+import org.postgresql.core.PGStream;
+import org.postgresql.core.ProtocolConnection;
+import org.postgresql.jdbc2.AbstractJdbc2Connection;
 
+/*
+ * A test to 
+ */
 public class TestDeadlock {
 	
 	private static Connection conn;
@@ -31,12 +42,7 @@ public class TestDeadlock {
 
 	@BeforeClass
 	public static void setUpBeforeClass() throws Exception {
-		Properties connProps = new Properties();
-		connProps.setProperty("user", System.getProperty("user.name"));
-		connProps.setProperty("password", System.getProperty("jdbcPassword"));
-		connProps.setProperty("loglevel", "2");
-		
-		conn = DriverManager.getConnection("jdbc:postgresql://localhost/regress", connProps);
+		conn = JDBCConnectionFactory.getConnection();
 
 		Statement st = conn.createStatement();
 		
@@ -73,6 +79,24 @@ public class TestDeadlock {
 	@AfterClass
 	public static void tearDownAfterClass() throws Exception {
 	}
+	
+	@Test
+	public void testBufferSize() throws NoSuchFieldException, SecurityException, IllegalArgumentException, IllegalAccessException, SocketException {
+		// Discover the socket buffer size by poking in the driver guts
+		assertNotNull(conn);
+		
+		// We must use AbstractJdbc2Connection directly, as that's the declaring class
+		Field pgProtoConnField = AbstractJdbc2Connection.class.getDeclaredField("protoConnection");
+		pgProtoConnField.setAccessible(true);
+		
+		ProtocolConnection pc = (ProtocolConnection)pgProtoConnField.get(conn);
+		Field pgstreamField = pc.getClass().getDeclaredField("pgStream");
+		pgstreamField.setAccessible(true);
+		
+		PGStream pgs = (PGStream) pgstreamField.get(pc);
+		Socket s = pgs.getSocket();
+		System.err.println("PgJDBC send buffer size is: " + s.getSendBufferSize());
+	}
 
 	@Test(timeout=60*1000)
 	public void testBatchDeadlock() throws SQLException {
@@ -90,6 +114,15 @@ public class TestDeadlock {
 		 * We also have to be able to fill our send buffer and the server's receive buffer,
 		 * so we need to send about the same amount of data in each request.
 		 */
+		{
+			Statement st = conn.createStatement();
+			st.execute("SELECT pg_backend_pid()");
+			ResultSet rs = st.getResultSet();
+			assertTrue(rs.next());		
+			System.out.println("PostgreSQL backend pid is " + rs.getInt(1));
+			st.close();
+		}
+		
 		final String padding64k = StringUtils.repeat("deadbeef", nRepeats);
 		try {
 			PreparedStatement ps = conn.prepareStatement(
