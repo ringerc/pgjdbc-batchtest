@@ -15,7 +15,9 @@ import java.util.Arrays;
 import java.util.Properties;
 
 import org.apache.commons.lang3.StringUtils;
+import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -28,7 +30,7 @@ import org.postgresql.jdbc2.AbstractJdbc2Connection;
  */
 public class TestDeadlock {
 	
-	private static Connection conn;
+	private Connection conn;
 	
 	/* 
 	 * Enough to massively over-fill any sane buffers.
@@ -39,12 +41,14 @@ public class TestDeadlock {
 	 */
 	private static final int nRepeats = 131072,
 							 nQueries = 32;
+	//private static final int nRepeats = 1,
+	//						 nQueries = 1024;
 
 	@BeforeClass
 	public static void setUpBeforeClass() throws Exception {
-		conn = JDBCConnectionFactory.getConnection();
+		Connection setupConn = JDBCConnectionFactory.getConnection();
 
-		Statement st = conn.createStatement();
+		Statement st = setupConn.createStatement();
 		
 		/* For batch without keys */
 		st.executeUpdate("DROP TABLE IF EXISTS deadlock_demo1;");
@@ -74,10 +78,31 @@ public class TestDeadlock {
 						+"    id integer primary key,"
 						+"    largetext varchar(65536) not null"
 						+");");
+		
+		setupConn.close();
 	}
 
 	@AfterClass
 	public static void tearDownAfterClass() throws Exception {
+	}
+	
+	@Before
+	public void before() throws Exception {
+		Properties props = new Properties();
+		//props.setProperty("loglevel","2");
+		props.setProperty("prepareThreshold", "1");
+		
+		conn = JDBCConnectionFactory.getConnection(props);
+	}
+	
+	@After
+	public void after() throws Exception {
+		try {
+			conn.close();
+		} catch (SQLException e) {
+			System.err.println("During after(): ");
+			e.printStackTrace();
+		}
 	}
 	
 	@Test
@@ -98,7 +123,16 @@ public class TestDeadlock {
 		System.err.println("PgJDBC send buffer size is: " + s.getSendBufferSize());
 	}
 
-	@Test(timeout=60*1000)
+	private void printBackendPid(String testName) throws SQLException {
+		Statement st = conn.createStatement();
+		st.execute("SELECT pg_backend_pid()");
+		ResultSet rs = st.getResultSet();
+		assertTrue(rs.next());		
+		System.out.println("PostgreSQL backend pid for "+testName+"() is " + rs.getInt(1));
+		st.close();
+	}
+	
+	@Test(timeout=15*1000)
 	public void testBatchDeadlock() throws SQLException {
 		/* 
 		 * Demonstrate that a client/server deadlock can still occur without RETURNING
@@ -114,14 +148,7 @@ public class TestDeadlock {
 		 * We also have to be able to fill our send buffer and the server's receive buffer,
 		 * so we need to send about the same amount of data in each request.
 		 */
-		{
-			Statement st = conn.createStatement();
-			st.execute("SELECT pg_backend_pid()");
-			ResultSet rs = st.getResultSet();
-			assertTrue(rs.next());		
-			System.out.println("PostgreSQL backend pid is " + rs.getInt(1));
-			st.close();
-		}
+		printBackendPid("testBatchDeadlock");
 		
 		final String padding64k = StringUtils.repeat("deadbeef", nRepeats);
 		try {
@@ -143,5 +170,18 @@ public class TestDeadlock {
 			throw ex;
 		}
 	}
+	
+	/* 
+	 * Why does this hit DESCRIBE once per batch entry? The results should/must be the same.
 
+		QueryExecutorImpl.sendDescribePortal(SimpleQuery, Portal) line: 1427	
+		QueryExecutorImpl.sendOneQuery(SimpleQuery, SimpleParameterList, int, int, int) line: 1631	
+		QueryExecutorImpl.sendQuery(V3Query, V3ParameterList, int, int, int, QueryExecutorImpl$ErrorTrackingResultHandler) line: 1137	
+		QueryExecutorImpl.execute(Query[], ParameterList[], ResultHandler, int, int, int) line: 396	
+		Jdbc4PreparedStatement(AbstractJdbc2Statement).executeBatch() line: 2897	
+		TestDeadlock.testBatchDeadlock() line: 142	
+		
+		Answer: https://github.com/pgjdbc/pgjdbc/issues/196
+
+	*/
 }
