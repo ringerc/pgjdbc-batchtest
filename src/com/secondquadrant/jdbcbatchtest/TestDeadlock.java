@@ -76,7 +76,7 @@ public class TestDeadlock {
 		
 		st.executeUpdate("CREATE TABLE deadlock_demo2("
 						+"    id integer primary key,"
-						+"    largetext varchar(65536) not null"
+						+"    largetext varchar not null"
 						+");");
 		
 		setupConn.close();
@@ -132,7 +132,7 @@ public class TestDeadlock {
 		st.close();
 	}
 	
-	@Test(timeout=15*1000)
+	@Test(timeout=15*1000) @Ignore
 	public void testBatchDeadlock() throws SQLException {
 		/* 
 		 * Demonstrate that a client/server deadlock can still occur without RETURNING
@@ -154,7 +154,7 @@ public class TestDeadlock {
 		try {
 			PreparedStatement ps = conn.prepareStatement(
 					"INSERT INTO deadlock_demo1(id, largetext) VALUES (?,?)");
-			/* 9 loops should be enough, but keep going ... */
+
 			for (int i = 0; i < nQueries; i++) {
 				ps.setInt(1, i);
 				ps.setString(2, padding64k);
@@ -184,4 +184,49 @@ public class TestDeadlock {
 		Answer: https://github.com/pgjdbc/pgjdbc/issues/196
 
 	*/
+	
+	@Test(timeout=15*1000)
+	public void testBatchDeadlockReturning() throws SQLException {
+		/* 
+		 * Test client/server deadlock with RETURNING clause
+		 */
+		printBackendPid("testBatchDeadlockReturning");
+		
+		final String padding64k = StringUtils.repeat("deadbeef", nRepeats);
+		try {
+			/* 
+			 * Note that there's no trigger to notices on deadlock_demo2,
+			 * instead the returned text value from the RETURNING clause 
+			 * will have the same effect.
+			 */
+			PreparedStatement ps = conn.prepareStatement(
+					"INSERT INTO deadlock_demo2(id, largetext) VALUES (?,?)",
+					new String[] { "id", "largetext" }
+					);
+			for (int i = 0; i < nQueries; i++) {
+				ps.setInt(1, i);
+				ps.setString(2, padding64k);
+				ps.addBatch();
+			}
+			int[] batchresult = ps.executeBatch();
+			assertEquals("Batch must contain expected result count", nQueries, batchresult.length);
+			int[] expectedresult = new int[nQueries];
+			Arrays.fill(expectedresult, 1);
+			assertArrayEquals("Each batch item must succeed", expectedresult, batchresult);
+			
+			 ResultSet rs = ps.getGeneratedKeys();
+
+		    for (int i = 0; i < nQueries; i++) {
+		        assertTrue("Must have generated keys", rs.next());
+		        assertEquals("Result must equal inserted value",
+		                          i, rs.getInt(1));
+		        assertEquals("Fetched padding data must match",
+		        				  padding64k, rs.getString(2));
+		    }
+		    assertFalse(rs.next());
+		} catch (SQLException ex) {
+			ex.getNextException().printStackTrace();
+			throw ex;
+		}
+	}
 }
