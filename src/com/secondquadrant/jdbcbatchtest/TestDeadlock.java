@@ -39,10 +39,10 @@ public class TestDeadlock {
 	 * easy to reproduce on a fast, high bandwidth loopback interface with big
 	 * buffers.
 	 */
-	private static final int nRepeats = 131072,
-							 nQueries = 32;
-	//private static final int nRepeats = 1,
-	//						 nQueries = 1024;
+	//private static final int nRepeats = 131072,
+	//						 nQueries = 32;
+	private static final int nRepeats = 1,
+							 nQueries = 2000;
 
 	@BeforeClass
 	public static void setUpBeforeClass() throws Exception {
@@ -76,7 +76,7 @@ public class TestDeadlock {
 		
 		st.executeUpdate("CREATE TABLE deadlock_demo2("
 						+"    id integer primary key,"
-						+"    largetext varchar not null"
+						+"    largetext varchar(2097152) not null"
 						+");");
 		
 		setupConn.close();
@@ -185,7 +185,7 @@ public class TestDeadlock {
 
 	*/
 	
-	@Test(timeout=15*1000)
+	@Test(timeout=15*1000) @Ignore
 	public void testBatchDeadlockReturning() throws SQLException {
 		/* 
 		 * Test client/server deadlock with RETURNING clause
@@ -222,6 +222,53 @@ public class TestDeadlock {
 		                          i, rs.getInt(1));
 		        assertEquals("Fetched padding data must match",
 		        				  padding64k, rs.getString(2));
+		    }
+		    assertFalse(rs.next());
+		} catch (SQLException ex) {
+			ex.getNextException().printStackTrace();
+			throw ex;
+		}
+	}
+
+	/* 
+	 * Now run much the same test yet again, but this time only fetch small keys.
+	 * 
+	 * It shouldn't deadlock, and should run a true batch.
+	 */
+	@Test
+	public void testBatchSmallReturning() throws SQLException {
+		/* 
+		 * Test client/server deadlock with RETURNING clause
+		 */
+		printBackendPid("testBatchDeadlockReturning");
+		
+		final String padding64k = StringUtils.repeat("deadbeef", nRepeats);
+		try {
+			/* 
+			 * Here we fetch just a small value as the return; batching
+			 * should be enabled even though we're sending big values.
+			 */
+			PreparedStatement ps = conn.prepareStatement(
+					"INSERT INTO deadlock_demo2(id, largetext) VALUES (?,?)",
+					new String[] { "id" }
+					);
+			for (int i = 0; i < nQueries; i++) {
+				ps.setInt(1, i);
+				ps.setString(2, padding64k);
+				ps.addBatch();
+			}
+			int[] batchresult = ps.executeBatch();
+			assertEquals("Batch must contain expected result count", nQueries, batchresult.length);
+			int[] expectedresult = new int[nQueries];
+			Arrays.fill(expectedresult, 1);
+			assertArrayEquals("Each batch item must succeed", expectedresult, batchresult);
+			
+			 ResultSet rs = ps.getGeneratedKeys();
+
+		    for (int i = 0; i < nQueries; i++) {
+		        assertTrue("Must have generated keys", rs.next());
+		        assertEquals("Result must equal inserted value",
+		                          i, rs.getInt(1));
 		    }
 		    assertFalse(rs.next());
 		} catch (SQLException ex) {
